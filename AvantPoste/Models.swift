@@ -6,9 +6,9 @@ enum Terrain: String, Codable {
     var hint: String {
         switch self {
         case .grass: "Prairie : terrain constructible."
-        case .forest: "Forêt : un bûcheron 🛖 à côté produit du bois, ou défrichez-la 🪓."
+        case .forest: "Forêt : un bûcheron 🛖 ou un chasseur 🏹 à côté en profite, ou défrichez-la 🪓."
         case .rock: "Roches : une carrière ⛏️ à côté extrait de la pierre."
-        case .water: "Eau : parfaite pour une pêcherie 🎣… et un jour pour le Grand Phare 🗼."
+        case .water: "Eau : parfaite pour une pêcherie 🎣 ou un port ⚓… et un jour pour le Grand Phare 🗼."
         }
     }
 }
@@ -34,6 +34,16 @@ enum Resource: String, CaseIterable, Identifiable, Codable {
         case .wood: "de bois"
         case .stone: "de pierre"
         case .gold: "d'or"
+        }
+    }
+
+    /// Gold the port pays for one unit.
+    var value: Double {
+        switch self {
+        case .food: 0.4
+        case .wood: 0.5
+        case .stone: 0.7
+        case .gold: 1
         }
     }
 }
@@ -70,6 +80,12 @@ struct Stock: Codable, Equatable {
 
     var label: String {
         entries.map { "\(Int($0.amount)) \($0.resource.icon)" }.joined(separator: " ")
+    }
+
+    static func + (lhs: Stock, rhs: Stock) -> Stock {
+        var sum = lhs
+        for resource in Resource.allCases { sum[resource] += rhs[resource] }
+        return sum
     }
 }
 
@@ -152,26 +168,30 @@ enum TaxLevel: Int, Codable, CaseIterable, Identifiable {
 }
 
 enum BuildingType: String, Codable, CaseIterable, Identifiable {
-    case camp, house, farm, fishery, lumber, quarry, warehouse, market, tavern, fountain, lighthouse
+    case camp, house, manor, farm, fishery, hunter, well, granary, lumber, quarry, carpenter, warehouse
+    case market, port, tavern, fountain, chapel, lighthouse
 
     var id: String { rawValue }
-
-    static let buildable: [BuildingType] = [
-        .house, .farm, .fishery, .lumber, .quarry, .warehouse, .market, .tavern, .fountain, .lighthouse,
-    ]
 
     var name: String {
         switch self {
         case .camp: "Campement"
         case .house: "Maison"
+        case .manor: "Manoir"
         case .farm: "Ferme"
         case .fishery: "Pêcherie"
+        case .hunter: "Chasseur"
+        case .well: "Puits"
+        case .granary: "Grenier"
         case .lumber: "Bûcheron"
         case .quarry: "Carrière"
+        case .carpenter: "Menuisier"
         case .warehouse: "Entrepôt"
         case .market: "Marché"
+        case .port: "Port"
         case .tavern: "Taverne"
         case .fountain: "Fontaine"
+        case .chapel: "Chapelle"
         case .lighthouse: "Grand Phare"
         }
     }
@@ -180,14 +200,21 @@ enum BuildingType: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .camp: "🏕️"
         case .house: "🏠"
+        case .manor: "🏡"
         case .farm: "🌾"
         case .fishery: "🎣"
+        case .hunter: "🏹"
+        case .well: "🪣"
+        case .granary: "🧺"
         case .lumber: "🛖"
         case .quarry: "⛏️"
+        case .carpenter: "🪚"
         case .warehouse: "📦"
         case .market: "🏪"
+        case .port: "⚓"
         case .tavern: "🍺"
         case .fountain: "⛲"
+        case .chapel: "⛪"
         case .lighthouse: "🗼"
         }
     }
@@ -196,14 +223,21 @@ enum BuildingType: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .camp: "Le cœur de l'avant-poste. Loge 6 colons et stocke 150 de chaque ressource."
         case .house: "Loge 4 colons. Consomme du bois en hiver."
-        case .farm: "Nourriture, sauf en hiver. +25 % près de l'eau."
+        case .manor: "Loge 8 colons. Peut remplacer une maison, dont le bois est réutilisé."
+        case .farm: "Nourriture, sauf en hiver. +25 % près de l'eau ou d'un puits."
         case .fishery: "Nourriture toute l'année, réduite en hiver. Au bord de l'eau."
+        case .hunter: "Nourriture toute l'année, selon les forêts voisines."
+        case .well: "Irrigue les fermes voisines : +25 %, comme près de l'eau."
+        case .granary: "+200 de stockage de nourriture. Tient les rats à l'écart."
         case .lumber: "Bois, selon le nombre de forêts voisines."
         case .quarry: "Pierre, selon le nombre de roches voisines."
+        case .carpenter: "Transforme 0,3 🪵/s en 0,24 🪙/s, en gardant 20 🪵 pour le chauffage."
         case .warehouse: "+150 de stockage pour chaque ressource."
         case .market: "+40 % de recettes fiscales."
+        case .port: "Vendez ou achetez à tout moment ; attire les marchands. Au bord de l'eau."
         case .tavern: "+8 de bonheur (3 tavernes au plus)."
         case .fountain: "+4 de bonheur, sans employé (4 au plus)."
+        case .chapel: "+5 de bonheur. Famine ou froid : les colons partent deux fois moins vite."
         case .lighthouse: "Merveille au bord de l'eau, 30 habitants requis. Victoire !"
         }
     }
@@ -212,14 +246,21 @@ enum BuildingType: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .camp: Stock()
         case .house: Stock(wood: 15)
+        case .manor: Stock(wood: 20, stone: 30)
         case .farm: Stock(wood: 20)
         case .fishery: Stock(wood: 18)
+        case .hunter: Stock(wood: 15)
+        case .well: Stock(wood: 10, stone: 15)
+        case .granary: Stock(wood: 30)
         case .lumber: Stock(wood: 12)
         case .quarry: Stock(wood: 20, gold: 10)
+        case .carpenter: Stock(wood: 25, stone: 10)
         case .warehouse: Stock(wood: 30, stone: 20)
         case .market: Stock(wood: 35, stone: 20)
+        case .port: Stock(wood: 40, stone: 20)
         case .tavern: Stock(wood: 30, stone: 25, gold: 20)
         case .fountain: Stock(stone: 30, gold: 15)
+        case .chapel: Stock(wood: 20, stone: 40)
         case .lighthouse: Stock(wood: 150, stone: 250, gold: 200)
         }
     }
@@ -227,7 +268,7 @@ enum BuildingType: String, Codable, CaseIterable, Identifiable {
     var maxWorkers: Int {
         switch self {
         case .farm, .lumber, .quarry: 2
-        case .fishery, .market, .tavern: 1
+        case .fishery, .hunter, .carpenter, .market, .tavern: 1
         default: 0
         }
     }
@@ -236,14 +277,17 @@ enum BuildingType: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .camp: 6
         case .house: 4
+        case .manor: 8
         default: 0
         }
     }
 
-    var storage: Double {
+    /// Room added to the colony's reserves. Gold needs none.
+    var storage: Stock {
         switch self {
-        case .camp, .warehouse: 150
-        default: 0
+        case .camp, .warehouse: Stock(food: 150, wood: 150, stone: 150)
+        case .granary: Stock(food: 200)
+        default: Stock()
         }
     }
 
@@ -252,6 +296,7 @@ enum BuildingType: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .camp: 0.06
         case .house: 0.04
+        case .manor: 0.05
         default: 0
         }
     }
@@ -259,7 +304,7 @@ enum BuildingType: String, Codable, CaseIterable, Identifiable {
     /// Colonists fill jobs in this order: food first.
     var priority: Int {
         switch self {
-        case .farm, .fishery: 0
+        case .farm, .fishery, .hunter: 0
         case .lumber: 1
         case .quarry: 2
         default: 3
@@ -278,6 +323,9 @@ struct Tile: Codable, Equatable {
 struct BuildingOutput {
     let resource: Resource
     let perSecond: Double
+    /// What a workshop uses up to make it.
+    var input: Resource? = nil
+    var inputPerSecond = 0.0
 }
 
 enum GameStatus: String, Codable {

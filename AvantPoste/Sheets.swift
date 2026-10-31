@@ -28,20 +28,25 @@ struct BuildingSheet: View {
                     }
                 }
 
-                VStack(spacing: 10) {
-                    ForEach(stats(type)) { stat in
-                        HStack {
-                            Text(stat.label)
-                            Spacer()
-                            Text(stat.value)
-                                .fontWeight(.semibold)
-                                .monospacedDigit()
+                let rows = stats(type)
+                if !rows.isEmpty {
+                    VStack(spacing: 10) {
+                        ForEach(rows) { stat in
+                            HStack {
+                                Text(stat.label)
+                                Spacer()
+                                Text(stat.value)
+                                    .fontWeight(.semibold)
+                                    .monospacedDigit()
+                            }
                         }
                     }
+                    .font(.callout)
+                    .padding(14)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
                 }
-                .font(.callout)
-                .padding(14)
-                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+
+                if type == .port { PortTrade() }
 
                 if let note = note(type, tile: tile) {
                     Text(note)
@@ -78,39 +83,122 @@ struct BuildingSheet: View {
 
     private func stats(_ type: BuildingType) -> [Stat] {
         var rows: [Stat] = []
+        let workers = game.staff[index] ?? 0
         if type.maxWorkers > 0 {
-            rows.append(Stat(label: "👷 Employés", value: "\(game.staff[index] ?? 0) / \(type.maxWorkers)"))
+            rows.append(Stat(label: "👷 Employés", value: "\(workers) / \(type.maxWorkers)"))
         }
         if let out = game.output(at: index) {
-            let amount = out.perSecond.formatted(.number.precision(.fractionLength(2)))
-            rows.append(Stat(label: "\(out.resource.icon) Production", value: "+\(amount) /s"))
+            rows.append(Stat(label: "\(out.resource.icon) Production", value: "+" + perSecond(out.perSecond)))
+            if let input = out.input {
+                rows.append(Stat(label: "\(input.icon) Consommation", value: "−" + perSecond(out.inputPerSecond)))
+            }
         }
         switch type {
         case .farm:
-            rows.append(Stat(label: "💧 Près de l'eau", value: game.count(.water, around: index) > 0 ? "+25 %" : "non"))
+            let irrigation = game.count(.water, around: index) > 0 ? "+25 % (eau)"
+                : game.count(.well, around: index) > 0 ? "+25 % (puits)" : "non"
+            rows.append(Stat(label: "💧 Irrigation", value: irrigation))
             rows.append(Stat(label: "\(game.season.icon) Saison", value: "×" + game.season.farmMultiplier.formatted()))
-        case .lumber:
+        case .lumber, .hunter:
             rows.append(Stat(label: "🌲 Forêts voisines", value: "\(game.count(.forest, around: index))"))
         case .quarry:
             rows.append(Stat(label: "🪨 Roches voisines", value: "\(game.count(.rock, around: index))"))
+        case .well:
+            rows.append(Stat(label: "🌾 Fermes irriguées", value: "\(game.count(.farm, around: index))"))
+        case .market:
+            rows.append(Stat(label: "🪙 Recettes fiscales", value: workers > 0 ? "+40 %" : "fermé"))
+        case .tavern:
+            rows.append(Stat(label: "😊 Bonheur", value: workers > 0 ? "+8" : "fermée"))
+        case .fountain:
+            rows.append(Stat(label: "😊 Bonheur", value: "+4"))
+        case .chapel:
+            rows.append(Stat(label: "😊 Bonheur", value: "+5"))
+            rows.append(Stat(label: "🚶 Départs en temps de crise", value: "÷ 2"))
+        case .granary:
+            rows.append(Stat(label: "🐀 Rats", value: "tenus à l'écart"))
+        case .lighthouse:
+            rows.append(Stat(label: "😊 Bonheur", value: "+15"))
         default:
             break
         }
         if type.housing > 0 { rows.append(Stat(label: "🛏️ Logements", value: "\(type.housing)")) }
-        if type.storage > 0 { rows.append(Stat(label: "📦 Stockage", value: "+\(Int(type.storage))")) }
+        let storage = type.storage.entries
+        if !storage.isEmpty {
+            rows.append(Stat(label: "📦 Stockage",
+                             value: storage.map { "+\(Int($0.amount)) \($0.resource.icon)" }.joined(separator: " ")))
+        }
         if type.heating > 0 {
             rows.append(Stat(label: "🔥 Chauffage en hiver", value: "−" + type.heating.formatted() + " 🪵/s"))
         }
         return rows
     }
 
+    private func perSecond(_ amount: Double) -> String {
+        amount.formatted(.number.precision(.fractionLength(2))) + " /s"
+    }
+
     private func note(_ type: BuildingType, tile: Tile) -> String? {
-        if type == .camp { return "Touchez 👥 en haut de l'écran pour régler les impôts et suivre le bonheur." }
+        switch type {
+        case .camp:
+            return "Touchez 👥 en haut de l'écran pour régler les impôts et suivre le bonheur."
+        case .house:
+            return "Pour l'agrandir, choisissez le manoir 🏡 dans Village puis touchez cette maison : 8 logements au lieu de 4."
+        default:
+            break
+        }
         guard type.maxWorkers > 0, !tile.paused else { return nil }
         if (game.staff[index] ?? 0) < type.maxWorkers {
             return "Il manque des bras : les colons travaillent d'abord à la nourriture, puis au bois, puis à la pierre."
         }
+        if type == .carpenter, game.stock.wood <= Game.carpenterReserve {
+            return "Le menuisier garde \(Int(Game.carpenterReserve)) 🪵 pour le chauffage : il attend que le stock remonte."
+        }
         return nil
+    }
+}
+
+private struct PortTrade: View {
+    @Environment(Game.self) private var game
+    @State private var deals = 0
+
+    var body: some View {
+        Grid(horizontalSpacing: 14, verticalSpacing: 10) {
+            GridRow {
+                Text("Lots de \(Int(Game.tradeLot))")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Vendre")
+                Text("Acheter")
+            }
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.secondary)
+            ForEach([Resource.food, .wood, .stone]) { resource in
+                let sell = game.tradePrice(resource, buying: false)
+                let buy = game.tradePrice(resource, buying: true)
+                GridRow {
+                    Text("\(resource.icon) \(Int(game.stock[resource]))")
+                        .monospacedDigit()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("+\(Int(sell)) 🪙") { trade(resource, buying: false) }
+                        .disabled(game.stock[resource] < Game.tradeLot)
+                    Button("−\(Int(buy)) 🪙") { trade(resource, buying: true) }
+                        .disabled(game.stock.gold < buy)
+                }
+            }
+        }
+        .font(.callout)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .padding(14)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+        .sensoryFeedback(.success, trigger: deals)
+    }
+
+    private func trade(_ resource: Resource, buying: Bool) {
+        if let error = game.trade(resource, buying: buying) {
+            game.notify(error, .bad)
+        } else {
+            deals += 1
+        }
     }
 }
 
@@ -216,13 +304,17 @@ struct HelpSheet: View {
                     tip("⏱️", "Temps réel",
                         "Le temps s'écoule en continu, quatre saisons par an. Mettez en pause ou accélérez avec les boutons en haut.")
                     tip("❄️", "L'hiver",
-                        "Les fermes s'arrêtent, la pêche ralentit et chaque maison brûle du bois. Faites des réserves en automne !")
+                        "Les fermes s'arrêtent, la pêche ralentit et chaque maison brûle du bois. Faites des réserves en automne ; le chasseur, lui, travaille toute l'année.")
                     tip("👷", "Les colons",
                         "Chacun mange 0,1 🍞/s et travaille là où il manque des bras, la nourriture d'abord. Mettez un bâtiment en pause pour libérer ses employés.")
                     tip("😊", "Le bonheur",
                         "Au-dessus de 40 %, de nouveaux colons arrivent s'il reste des logements. Famine, froid ou bonheur sous 25 % les font fuir.")
                     tip("🗺️", "L'emplacement compte",
-                        "Le bûcheron produit selon les forêts voisines, la carrière selon les roches voisines, la ferme gagne +25 % près de l'eau.")
+                        "Bûcheron et chasseur profitent des forêts voisines, la carrière des roches voisines. La ferme gagne +25 % près de l'eau ou d'un puits.")
+                    tip("🏡", "Agrandir",
+                        "Un manoir (onglet Village) peut remplacer une maison : 8 colons au lieu de 4, sur la même case.")
+                    tip("⚓", "Le port",
+                        "Touchez-le pour vendre vos surplus ou acheter ce qui manque, à tout moment.")
                     tip("🪓", "Défricher",
                         "Couper une forêt rapporte du bois tout de suite. Les forêts repoussent doucement au printemps et en été.")
                     tip("🧳", "Les imprévus",

@@ -39,7 +39,7 @@ struct HUDView: View {
                         resource: resource,
                         amount: game.stock[resource],
                         rate: game.rates[resource],
-                        full: resource != .gold && game.stock[resource] >= game.storageCap - 0.5
+                        full: resource != .gold && game.stock[resource] >= game.storageCap[resource] - 0.5
                     )
                 }
             }

@@ -1,8 +1,36 @@
 import SwiftUI
 
+/// Buildings grouped by purpose, so each row fits on screen.
+private enum BuildTab: CaseIterable, Identifiable {
+    case food, materials, village, trade, tools
+
+    var id: Self { self }
+
+    var name: String {
+        switch self {
+        case .food: "Vivres"
+        case .materials: "Ressources"
+        case .village: "Village"
+        case .trade: "Commerce"
+        case .tools: "Outils"
+        }
+    }
+
+    var buildings: [BuildingType] {
+        switch self {
+        case .food: [.farm, .fishery, .hunter, .well, .granary]
+        case .materials: [.lumber, .quarry, .carpenter, .warehouse]
+        case .village: [.house, .manor, .tavern, .fountain, .chapel]
+        case .trade: [.market, .port, .lighthouse]
+        case .tools: []
+        }
+    }
+}
+
 struct BuildBar: View {
     @Environment(Game.self) private var game
     @Binding var tool: Tool?
+    @State private var tab: BuildTab = .food
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -26,24 +54,41 @@ struct BuildBar: View {
             .padding(.horizontal, 14)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(BuildingType.buildable) { type in
-                        BuildCard(icon: type.icon, title: type.name, detail: type.cost.label,
-                                  selected: tool == .build(type), enabled: game.canAfford(type.cost))
-                            .onTapGesture { select(.build(type)) }
+                HStack(spacing: 6) {
+                    ForEach(BuildTab.allCases) { candidate in
+                        let selected = tab == candidate
+                        Button { tab = candidate } label: {
+                            Text(candidate.name)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(selected ? Color.white : Color.primary)
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 6)
+                                .background(selected ? Color.accentColor : Color.primary.opacity(0.07), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
                     }
-                    Rectangle()
-                        .fill(Color.secondary.opacity(0.3))
-                        .frame(width: 1, height: 56)
+                }
+                .padding(.horizontal, 12)
+            }
+
+            HStack(spacing: 6) {
+                if tab == .tools {
                     BuildCard(icon: "🪓", title: "Défricher", detail: "+\(Int(Game.clearedForestWood)) 🪵",
                               selected: tool == .clear, enabled: true)
                         .onTapGesture { select(.clear) }
                     BuildCard(icon: "🧨", title: "Démolir", detail: "rend 50 %",
                               selected: tool == .demolish, enabled: true)
                         .onTapGesture { select(.demolish) }
+                } else {
+                    ForEach(tab.buildings) { type in
+                        BuildCard(icon: type.icon, title: type.name, detail: type.cost.label,
+                                  selected: tool == .build(type), enabled: game.canAfford(type.cost))
+                            .onTapGesture { select(.build(type)) }
+                    }
                 }
-                .padding(.horizontal, 12)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
         }
         .padding(.top, 8)
         .padding(.bottom, 4)
@@ -86,7 +131,9 @@ struct BuildCard: View {
                 .minimumScaleFactor(0.6)
         }
         .padding(.horizontal, 4)
-        .frame(width: 78, height: 82)
+        // Shrinks so a full row of five cards fits on the narrowest iPhone.
+        .frame(maxWidth: 86)
+        .frame(height: 82)
         .background(selected ? Color.accentColor.opacity(0.22) : Color.primary.opacity(0.06),
                     in: RoundedRectangle(cornerRadius: 14))
         .overlay {

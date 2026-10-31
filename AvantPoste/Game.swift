@@ -10,6 +10,8 @@ final class Game {
     static let offerDuration = 20.0
     static let lighthousePopulation = 30
     static let clearedForestWood = 8.0
+    static let tradeLot = 20.0
+    static let carpenterReserve = 20.0
 
     // MARK: Saved state
 
@@ -149,25 +151,31 @@ final class Game {
     /// Recomputes rates, shortages and happiness without advancing time.
     private func updateEconomy() {
         var produced = Stock()
+        var consumed = Stock()
         var markets = 0.0, taverns = 0, fountains = 0, heating = 0.0
-        var lighthouse = false
+        var lighthouse = false, chapel = false
         for i in tiles.indices {
             guard let building = tiles[i].building else { continue }
-            if let out = output(at: i) { produced[out.resource] += out.perSecond }
+            if let out = output(at: i) {
+                produced[out.resource] += out.perSecond
+                if let input = out.input { consumed[input] += out.inputPerSecond }
+            }
             switch building {
             case .market: markets += Double(staff[i] ?? 0)
             case .tavern where (staff[i] ?? 0) > 0: taverns += 1
             case .fountain: fountains += 1
+            case .chapel: chapel = true
             case .lighthouse: lighthouse = true
             default: break
             }
             if season == .winter { heating += building.heating }
         }
-        produced.gold = Double(population) * taxLevel.goldPerColonist * (1 + 0.4 * markets)
+        produced.gold += Double(population) * taxLevel.goldPerColonist * (1 + 0.4 * markets)
 
         var net = produced
         net.food -= foodConsumption
         net.wood -= heating
+        for entry in consumed.entries { net[entry.resource] -= entry.amount }
         if net != rates { rates = net }
 
         let nowFamine = stock.food < 0.5 && net.food < 0
@@ -185,12 +193,13 @@ final class Game {
         if famine {
             factors.append(.init(label: "Famine", value: -40))
         } else if stock.food >= 30 {
-            factors.append(.init(label: "Greniers bien remplis", value: 10))
+            factors.append(.init(label: "Réserves bien remplies", value: 10))
         }
         if cold { factors.append(.init(label: "Froid", value: -30)) }
         if taxLevel.happiness != 0 { factors.append(.init(label: taxLevel.factorLabel, value: taxLevel.happiness)) }
         if taverns > 0 { factors.append(.init(label: "Tavernes", value: min(taverns, 3) * 8)) }
         if fountains > 0 { factors.append(.init(label: "Fontaines", value: min(fountains, 4) * 4)) }
+        if chapel { factors.append(.init(label: "Chapelle", value: 5)) }
         if lighthouse { factors.append(.init(label: "Fierté du Grand Phare", value: 15)) }
         if population >= 8, Double(idle) > Double(population) * 0.4 {
             factors.append(.init(label: "Chômage", value: -10))
@@ -206,7 +215,7 @@ final class Game {
         var next = stock
         for resource in Resource.allCases {
             let value = max(0, next[resource] + rates[resource] * dt)
-            next[resource] = resource == .gold ? value : min(value, cap)
+            next[resource] = resource == .gold ? value : min(value, cap[resource])
         }
         stock = next
     }
@@ -224,8 +233,10 @@ final class Game {
         }
 
         var leaveRate = 0.0
-        if famine { leaveRate += 0.25 }
-        if cold { leaveRate += 0.12 }
+        // A chapel keeps hope alive through hard times.
+        let crisis = has(.chapel) ? 0.5 : 1
+        if famine { leaveRate += 0.25 * crisis }
+        if cold { leaveRate += 0.12 * crisis }
         if happiness < 25 { leaveRate += 0.08 }
         if population > housing { leaveRate += 0.3 }
         guard leaveRate > 0 else {
@@ -266,9 +277,18 @@ final class Game {
         Game.neighbors(of: i).reduce(0) { $0 + (tiles[$1].terrain == terrain ? 1 : 0) }
     }
 
+    func count(_ building: BuildingType, around i: Int) -> Int {
+        Game.neighbors(of: i).reduce(0) { $0 + (tiles[$1].building == building ? 1 : 0) }
+    }
+
+    /// Farms next to water or to a well get +25 %.
+    func isIrrigated(_ i: Int) -> Bool {
+        count(.water, around: i) > 0 || count(.well, around: i) > 0
+    }
+
     var housing: Int { tiles.reduce(0) { $0 + ($1.building?.housing ?? 0) } }
 
-    var storageCap: Double { tiles.reduce(0) { $0 + ($1.building?.storage ?? 0) } }
+    var storageCap: Stock { tiles.reduce(Stock()) { $0 + ($1.building?.storage ?? Stock()) } }
 
     var foodConsumption: Double { Double(population) * Game.foodPerColonist }
 
@@ -286,14 +306,21 @@ final class Game {
         let staffed = Double(staff[i] ?? 0) / Double(building.maxWorkers)
         switch building {
         case .farm:
-            let water = count(.water, around: i) > 0 ? 1.25 : 1
-            return BuildingOutput(resource: .food, perSecond: staffed * season.farmMultiplier * water)
+            let irrigation = isIrrigated(i) ? 1.25 : 1
+            return BuildingOutput(resource: .food, perSecond: staffed * season.farmMultiplier * irrigation)
         case .fishery:
             return BuildingOutput(resource: .food, perSecond: 0.5 * staffed * (season == .winter ? 0.5 : 1))
+        case .hunter:
+            return BuildingOutput(resource: .food, perSecond: 0.08 * Double(count(.forest, around: i)) * staffed)
         case .lumber:
             return BuildingOutput(resource: .wood, perSecond: 0.16 * Double(count(.forest, around: i)) * staffed)
         case .quarry:
             return BuildingOutput(resource: .stone, perSecond: 0.14 * Double(count(.rock, around: i)) * staffed)
+        case .carpenter:
+            // Idles below the reserve so the colony keeps wood to heat itself.
+            let working = stock.wood > Game.carpenterReserve ? staffed : 0
+            return BuildingOutput(resource: .gold, perSecond: 0.24 * working,
+                                  input: .wood, inputPerSecond: 0.3 * working)
         default:
             return nil
         }
@@ -302,15 +329,25 @@ final class Game {
     /// Why `type` can't go on tile `i`, or nil when it can.
     func placementError(_ type: BuildingType, at i: Int, checkCost: Bool = true) -> String? {
         let tile = tiles[i]
-        if tile.building != nil { return "Cette case est déjà occupée." }
-        if tile.terrain != .grass { return "Il faut construire sur une prairie." }
+        if let existing = tile.building {
+            guard type == .manor, existing == .house else { return "Cette case est déjà occupée." }
+        } else if tile.terrain != .grass {
+            return "Il faut construire sur une prairie."
+        }
         switch type {
         case .lumber where count(.forest, around: i) == 0:
             return "Le bûcheron doit toucher une forêt."
+        case .hunter where count(.forest, around: i) == 0:
+            return "Le chasseur doit toucher une forêt."
         case .quarry where count(.rock, around: i) == 0:
             return "La carrière doit toucher des roches."
         case .fishery where count(.water, around: i) == 0:
             return "La pêcherie doit être au bord de l'eau."
+        case .port:
+            if has(.port) { return "Il n'y a qu'un seul port." }
+            if count(.water, around: i) == 0 { return "Le port doit être au bord de l'eau." }
+        case .chapel where has(.chapel):
+            return "Une seule chapelle suffit."
         case .lighthouse:
             if has(.lighthouse) { return "Il n'y a qu'un seul Grand Phare." }
             if count(.water, around: i) == 0 { return "Le Grand Phare doit être au bord de l'eau." }
@@ -321,17 +358,26 @@ final class Game {
         if type == .lighthouse && population < Game.lighthousePopulation {
             return "Il faut au moins \(Game.lighthousePopulation) habitants."
         }
-        for entry in type.cost.entries where stock[entry.resource] < entry.amount {
+        for entry in buildCost(type, at: i).entries where stock[entry.resource] < entry.amount {
             return "Pas assez \(entry.resource.partitive) \(entry.resource.icon)."
         }
         return nil
+    }
+
+    /// What placing `type` on tile `i` costs: a manor built over a house reuses its materials.
+    func buildCost(_ type: BuildingType, at i: Int) -> Stock {
+        var cost = type.cost
+        if type == .manor, let replaced = tiles[i].building {
+            for entry in replaced.cost.entries { cost[entry.resource] = max(0, cost[entry.resource] - entry.amount) }
+        }
+        return cost
     }
 
     // MARK: Player actions
 
     func build(_ type: BuildingType, at i: Int) -> String? {
         if let error = placementError(type, at: i) { return error }
-        for entry in type.cost.entries { stock[entry.resource] -= entry.amount }
+        for entry in buildCost(type, at: i).entries { stock[entry.resource] -= entry.amount }
         tiles[i].building = type
         tiles[i].paused = false
         recomputeStaffing()
@@ -355,7 +401,7 @@ final class Game {
     func clearForest(at i: Int) -> String? {
         guard tiles[i].terrain == .forest else { return "Seules les forêts peuvent être défrichées." }
         tiles[i].terrain = .grass
-        stock.wood = min(stock.wood + Game.clearedForestWood, storageCap)
+        stock.wood = min(stock.wood + Game.clearedForestWood, storageCap.wood)
         updateEconomy()
         return nil
     }
@@ -377,6 +423,27 @@ final class Game {
         for entry in deal.give.entries { stock[entry.resource] -= entry.amount }
         for entry in deal.receive.entries { stock[entry.resource] += entry.amount }
         notify("🤝 Marché conclu !", .good)
+    }
+
+    /// Gold for one lot at the port: sold at its value, bought at two and a half times that.
+    func tradePrice(_ resource: Resource, buying: Bool) -> Double {
+        Game.tradeLot * resource.value * (buying ? 2.5 : 1)
+    }
+
+    func trade(_ resource: Resource, buying: Bool) -> String? {
+        let price = tradePrice(resource, buying: buying)
+        if buying {
+            if stock.gold < price { return "Pas assez d'or 🪙." }
+            if stock[resource] + Game.tradeLot > storageCap[resource] { return "Plus de place dans les réserves." }
+            stock.gold -= price
+            stock[resource] += Game.tradeLot
+        } else {
+            if stock[resource] < Game.tradeLot { return "Pas assez \(resource.partitive) \(resource.icon)." }
+            stock[resource] -= Game.tradeLot
+            stock.gold += price
+        }
+        updateEconomy()
+        return nil
     }
 
     func continueAfterWin() {
@@ -419,9 +486,13 @@ final class Game {
         }
         if stock.food > 40 {
             events.append { [self] in
+                guard !has(.granary) else {
+                    notify("🐀 Des rats rôdent, mais le grenier protège les réserves.", .good)
+                    return
+                }
                 let lost = (stock.food * 0.2).rounded()
                 stock.food -= lost
-                notify("🐀 Des rats dans les greniers : -\(Int(lost)) 🍞", .bad)
+                notify("🐀 Des rats dans les réserves : -\(Int(lost)) 🍞", .bad)
             }
         }
         if has(.quarry) {
@@ -443,9 +514,10 @@ final class Game {
             }
         }
         if offer == nil, let deal = makeOffer() {
-            // Merchants are the most common visitors.
-            events.append { [self] in offer = deal }
-            events.append { [self] in offer = deal }
+            // Merchants are the most common visitors, all the more with a port.
+            for _ in 0..<(has(.port) ? 4 : 2) {
+                events.append { [self] in offer = deal }
+            }
         }
         events.randomElement(using: &rng)?()
     }
