@@ -432,7 +432,7 @@ struct HelpSheet: View {
                     tip("📊", "Les détails",
                         "Touchez une ressource en haut de l'écran pour voir ce qui la produit et ce qui la consomme.")
                     tip("🪓", "Défricher",
-                        "Couper une forêt rapporte du bois tout de suite. Les forêts repoussent doucement au printemps et en été.")
+                        "Couper une forêt rapporte du bois tout de suite. Elle repousse doucement au printemps et en été ; les prairies, elles, restent libres.")
                     tip("🧳", "Les imprévus",
                         "Caravanes, marchands, tempêtes ou rats : gardez un œil sur les messages !")
                 }

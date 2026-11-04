@@ -52,6 +52,8 @@ final class Game {
     @ObservationIgnored private var leaveProgress = 0.0
     @ObservationIgnored private var nextEventAt = 50.0
     @ObservationIgnored private var nextRegrowthAt = 20.0
+    /// Tiles wooded on the generated map: the only ones a cut forest grows back on.
+    @ObservationIgnored private var originalForest: Set<Int> = []
     @ObservationIgnored private var staffDirty = true
     @ObservationIgnored private var lastSave = Date()
 
@@ -63,6 +65,7 @@ final class Game {
         self.seed = seed
         rng = SplitMix64(seed: seed &* 31 &+ 7)
         tiles = MapGenerator.generate(seed: seed)
+        originalForest = Game.forestAtStart(seed: seed)
         stock = Stock(food: 40, wood: 60, stone: 10, gold: 20)
         elapsed = 0
         season = .spring
@@ -608,16 +611,23 @@ final class Game {
         return TradeOffer(give: deal.give, receive: deal.receive, remaining: Game.offerDuration)
     }
 
-    /// Forests slowly spread onto empty meadows in spring and summer.
+    /// Cut forests slowly grow back in spring and summer, never onto the original meadows.
     private func regrowForest() {
         nextRegrowthAt = elapsed + 12
         guard season == .spring || season == .summer else { return }
         let candidates = tiles.indices.filter {
-            tiles[$0].terrain == .grass && tiles[$0].building == nil && count(.forest, around: $0) >= 3
+            originalForest.contains($0) && tiles[$0].terrain == .grass && tiles[$0].building == nil
+                && count(.forest, around: $0) >= 3
         }
         guard let i = candidates.randomElement(using: &rng) else { return }
         tiles[i].terrain = .forest
         updateEconomy()
+    }
+
+    /// The wooded tiles of the map `seed` generates, rebuilt on load so saves need no extra field.
+    private static func forestAtStart(seed: UInt64) -> Set<Int> {
+        let map = MapGenerator.generate(seed: seed)
+        return Set(map.indices.filter { map[$0].terrain == .forest })
     }
 
     private func isDone(_ objective: Objective) -> Bool {
@@ -696,6 +706,7 @@ final class Game {
               data.tiles.count == Game.cols * Game.rows
         else { return false }
         seed = data.seed
+        originalForest = Game.forestAtStart(seed: seed)
         rng = data.rng
         tiles = data.tiles
         stock = data.stock
