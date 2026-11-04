@@ -18,6 +18,15 @@ enum Resource: String, CaseIterable, Identifiable, Codable {
 
     var id: String { rawValue }
 
+    var name: String {
+        switch self {
+        case .food: "Nourriture"
+        case .wood: "Bois"
+        case .stone: "Pierre"
+        case .gold: "Or"
+        }
+    }
+
     var icon: String {
         switch self {
         case .food: "🍞"
@@ -170,6 +179,10 @@ enum TaxLevel: Int, Codable, CaseIterable, Identifiable {
 enum BuildingType: String, Codable, CaseIterable, Identifiable {
     case camp, house, manor, farm, fishery, hunter, well, granary, lumber, quarry, carpenter, warehouse
     case market, port, tavern, fountain, chapel, lighthouse
+    case bakery, smokehouse, sawmill, stonemason, forge
+
+    /// Buildings whose only job is to make producers more productive.
+    static let workshops: [BuildingType] = [.bakery, .smokehouse, .sawmill, .stonemason, .forge]
 
     var id: String { rawValue }
 
@@ -193,6 +206,11 @@ enum BuildingType: String, Codable, CaseIterable, Identifiable {
         case .fountain: "Fontaine"
         case .chapel: "Chapelle"
         case .lighthouse: "Grand Phare"
+        case .bakery: "Boulangerie"
+        case .smokehouse: "Fumoir"
+        case .sawmill: "Scierie"
+        case .stonemason: "Marbrerie"
+        case .forge: "Forge"
         }
     }
 
@@ -208,7 +226,7 @@ enum BuildingType: String, Codable, CaseIterable, Identifiable {
         case .granary: "🧺"
         case .lumber: "🛖"
         case .quarry: "⛏️"
-        case .carpenter: "🪚"
+        case .carpenter: "🪑"
         case .warehouse: "📦"
         case .market: "🏪"
         case .port: "⚓"
@@ -216,6 +234,11 @@ enum BuildingType: String, Codable, CaseIterable, Identifiable {
         case .fountain: "⛲"
         case .chapel: "⛪"
         case .lighthouse: "🗼"
+        case .bakery: "🥖"
+        case .smokehouse: "🍖"
+        case .sawmill: "🪚"
+        case .stonemason: "🗿"
+        case .forge: "⚒️"
         }
     }
 
@@ -224,21 +247,26 @@ enum BuildingType: String, Codable, CaseIterable, Identifiable {
         case .camp: "Le cœur de l'avant-poste. Loge 6 colons et stocke 150 de chaque ressource."
         case .house: "Loge 4 colons. Consomme du bois en hiver."
         case .manor: "Loge 8 colons. Peut remplacer une maison, dont le bois est réutilisé."
-        case .farm: "Nourriture, sauf en hiver. +25 % près de l'eau ou d'un puits."
+        case .farm: "Nourriture, sauf en hiver. +25 % près de l'eau ou d'un puits."
         case .fishery: "Nourriture toute l'année, réduite en hiver. Au bord de l'eau."
         case .hunter: "Nourriture toute l'année, selon les forêts voisines."
-        case .well: "Irrigue les fermes voisines : +25 %, comme près de l'eau."
+        case .well: "Irrigue les fermes voisines : +25 %, comme près de l'eau."
         case .granary: "+200 de stockage de nourriture. Tient les rats à l'écart."
         case .lumber: "Bois, selon le nombre de forêts voisines."
         case .quarry: "Pierre, selon le nombre de roches voisines."
         case .carpenter: "Transforme 0,3 🪵/s en 0,24 🪙/s, en gardant 20 🪵 pour le chauffage."
         case .warehouse: "+150 de stockage pour chaque ressource."
-        case .market: "+40 % de recettes fiscales."
+        case .market: "+40 % de recettes fiscales."
         case .port: "Vendez ou achetez à tout moment ; attire les marchands. Au bord de l'eau."
         case .tavern: "+8 de bonheur (3 tavernes au plus)."
         case .fountain: "+4 de bonheur, sans employé (4 au plus)."
         case .chapel: "+5 de bonheur. Famine ou froid : les colons partent deux fois moins vite."
         case .lighthouse: "Merveille au bord de l'eau, 30 habitants requis. Victoire !"
+        case .bakery: "+50 % de nourriture pour les fermes à 2 cases ou moins."
+        case .smokehouse: "+50 % pour les pêcheries et les chasseurs à 2 cases ou moins."
+        case .sawmill: "+50 % de bois pour les bûcherons à 2 cases ou moins."
+        case .stonemason: "+50 % de pierre pour les carrières à 2 cases ou moins."
+        case .forge: "Des outils pour tous : +15 % à toute la production. Une seule forge."
         }
     }
 
@@ -262,13 +290,19 @@ enum BuildingType: String, Codable, CaseIterable, Identifiable {
         case .fountain: Stock(stone: 30, gold: 15)
         case .chapel: Stock(wood: 20, stone: 40)
         case .lighthouse: Stock(wood: 150, stone: 250, gold: 200)
+        case .bakery: Stock(wood: 25, stone: 15)
+        case .smokehouse: Stock(wood: 25, stone: 10)
+        case .sawmill: Stock(wood: 30, stone: 20)
+        case .stonemason: Stock(wood: 40, stone: 10, gold: 10)
+        case .forge: Stock(wood: 40, stone: 40, gold: 30)
         }
     }
 
     var maxWorkers: Int {
         switch self {
-        case .farm, .lumber, .quarry: 2
+        case .farm, .lumber, .quarry, .forge: 2
         case .fishery, .hunter, .carpenter, .market, .tavern: 1
+        case .bakery, .smokehouse, .sawmill, .stonemason: 1
         default: 0
         }
     }
@@ -310,6 +344,33 @@ enum BuildingType: String, Codable, CaseIterable, Identifiable {
         default: 3
         }
     }
+
+    /// The workshop that makes this producer 50 % more productive from up to 2 tiles away.
+    var workshop: BuildingType? {
+        switch self {
+        case .farm: .bakery
+        case .fishery, .hunter: .smokehouse
+        case .lumber: .sawmill
+        case .quarry: .stonemason
+        default: nil
+        }
+    }
+
+    /// Farms, fisheries, hunters, lumber camps and quarries: what workshops and the forge improve.
+    var isProducer: Bool { workshop != nil }
+
+    var improves: [BuildingType] { BuildingType.allCases.filter { $0.workshop == self } }
+
+    /// Why a workshop can't go where nothing it improves is in reach.
+    var reachRule: String? {
+        switch self {
+        case .bakery: "La boulangerie doit être à 2 cases ou moins d'une ferme."
+        case .smokehouse: "Le fumoir doit être à 2 cases ou moins d'une pêcherie ou d'un chasseur."
+        case .sawmill: "La scierie doit être à 2 cases ou moins d'un bûcheron."
+        case .stonemason: "La marbrerie doit être à 2 cases ou moins d'une carrière."
+        default: nil
+        }
+    }
 }
 
 struct Tile: Codable, Equatable {
@@ -326,6 +387,16 @@ struct BuildingOutput {
     /// What a workshop uses up to make it.
     var input: Resource? = nil
     var inputPerSecond = 0.0
+}
+
+/// One source or use of a resource per second, in the production details.
+struct RateLine: Identifiable {
+    let label: String
+    let amount: Double
+    /// Part of `amount` owed to workshops, the forge or markets.
+    var bonus = 0.0
+
+    var id: String { label }
 }
 
 enum GameStatus: String, Codable {
@@ -355,7 +426,7 @@ struct HappinessFactor: Identifiable, Equatable {
 }
 
 enum Objective: Int, CaseIterable, Identifiable {
-    case farm, lumber, pop10, winter, quarry, tavern, pop25, lighthouse
+    case farm, lumber, pop10, winter, quarry, tavern, pop25, workshop, lighthouse
 
     var id: Int { rawValue }
 
@@ -368,6 +439,7 @@ enum Objective: Int, CaseIterable, Identifiable {
         case .quarry: "Construire une carrière"
         case .tavern: "Ouvrir une taverne"
         case .pop25: "Atteindre 25 habitants"
+        case .workshop: "Construire un atelier"
         case .lighthouse: "Bâtir le Grand Phare"
         }
     }
@@ -381,6 +453,7 @@ enum Objective: Int, CaseIterable, Identifiable {
         case .quarry: Stock(wood: 20)
         case .tavern: Stock(stone: 30)
         case .pop25: Stock(gold: 60)
+        case .workshop: Stock(stone: 40)
         case .lighthouse: Stock()
         }
     }

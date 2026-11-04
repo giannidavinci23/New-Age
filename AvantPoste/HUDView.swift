@@ -6,6 +6,7 @@ struct HUDView: View {
     @Binding var showObjectives: Bool
     @Binding var showHelp: Bool
     @Binding var confirmNewGame: Bool
+    @Binding var detailResource: Resource?
 
     var body: some View {
         VStack(spacing: 8) {
@@ -35,12 +36,15 @@ struct HUDView: View {
 
             HStack(spacing: 6) {
                 ForEach(Resource.allCases) { resource in
-                    ResourceChip(
-                        resource: resource,
-                        amount: game.stock[resource],
-                        rate: game.rates[resource],
-                        full: resource != .gold && game.stock[resource] >= game.storageCap[resource] - 0.5
-                    )
+                    Button { detailResource = resource } label: {
+                        ResourceChip(
+                            resource: resource,
+                            amount: game.stock[resource],
+                            rate: game.rates[resource],
+                            full: resource != .gold && game.stock[resource] >= game.storageCap[resource] - 0.5
+                        )
+                    }
+                    .buttonStyle(.plain)
                 }
             }
 
@@ -48,7 +52,7 @@ struct HUDView: View {
                 Button { showColony = true } label: {
                     HStack(spacing: 10) {
                         Text("👥 \(game.population)/\(game.housing)")
-                        Text("\(moodIcon) \(Int(game.happiness.rounded())) %")
+                        Text("\(moodIcon) \(Int(game.happiness.rounded())) %")
                     }
                     .font(.footnote.weight(.semibold))
                     .monospacedDigit()

@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Buildings grouped by purpose, so each row fits on screen.
 private enum BuildTab: CaseIterable, Identifiable {
-    case food, materials, village, trade, tools
+    case food, materials, workshops, village, trade, tools
 
     var id: Self { self }
 
@@ -10,6 +10,7 @@ private enum BuildTab: CaseIterable, Identifiable {
         switch self {
         case .food: "Vivres"
         case .materials: "Ressources"
+        case .workshops: "Ateliers"
         case .village: "Village"
         case .trade: "Commerce"
         case .tools: "Outils"
@@ -20,6 +21,7 @@ private enum BuildTab: CaseIterable, Identifiable {
         switch self {
         case .food: [.farm, .fishery, .hunter, .well, .granary]
         case .materials: [.lumber, .quarry, .carpenter, .warehouse]
+        case .workshops: BuildingType.workshops
         case .village: [.house, .manor, .tavern, .fountain, .chapel]
         case .trade: [.market, .port, .lighthouse]
         case .tools: []
@@ -76,7 +78,7 @@ struct BuildBar: View {
                     BuildCard(icon: "🪓", title: "Défricher", detail: "+\(Int(Game.clearedForestWood)) 🪵",
                               selected: tool == .clear, enabled: true)
                         .onTapGesture { select(.clear) }
-                    BuildCard(icon: "🧨", title: "Démolir", detail: "rend 50 %",
+                    BuildCard(icon: "🧨", title: "Démolir", detail: "rend 50 %",
                               selected: tool == .demolish, enabled: true)
                         .onTapGesture { select(.demolish) }
                 } else {
@@ -103,7 +105,7 @@ struct BuildBar: View {
         switch tool {
         case .build(let type)?: "\(type.icon) \(type.name) — \(type.summary)"
         case .clear?: "🪓 Touchez une forêt pour la couper (+\(Int(Game.clearedForestWood)) 🪵)."
-        case .demolish?: "🧨 Touchez un bâtiment pour le démolir (50 % remboursés)."
+        case .demolish?: "🧨 Touchez un bâtiment pour le démolir (50 % remboursés)."
         case nil: "Choisissez une construction, ou touchez un bâtiment pour le gérer."
         }
     }

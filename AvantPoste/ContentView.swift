@@ -22,6 +22,7 @@ struct ContentView: View {
     @State private var showObjectives = false
     @State private var showHelp = false
     @State private var confirmNewGame = false
+    @State private var detailResource: Resource?
     @State private var lastTick = Date()
     @State private var successes = 0
     @State private var failures = 0
@@ -31,7 +32,7 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             HUDView(showColony: $showColony, showObjectives: $showObjectives,
-                    showHelp: $showHelp, confirmNewGame: $confirmNewGame)
+                    showHelp: $showHelp, confirmNewGame: $confirmNewGame, detailResource: $detailResource)
             MapView(tool: tool, onTap: handleTap)
                 .overlay(alignment: .top) { ToastStack() }
                 .overlay(alignment: .bottom) { OfferCard() }
@@ -56,6 +57,10 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showHelp) {
             HelpSheet()
+        }
+        .sheet(item: $detailResource) { resource in
+            ResourceSheet(resource: resource)
+                .presentationDetents([.medium, .large])
         }
         .confirmationDialog("Abandonner cette colonie et en fonder une nouvelle ?",
                             isPresented: $confirmNewGame, titleVisibility: .visible) {

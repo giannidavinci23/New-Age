@@ -12,6 +12,9 @@ final class Game {
     static let clearedForestWood = 8.0
     static let tradeLot = 20.0
     static let carpenterReserve = 20.0
+    static let workshopReach = 2
+    static let workshopBonus = 0.5
+    static let forgeMaxBonus = 0.15
 
     // MARK: Saved state
 
@@ -150,40 +153,30 @@ final class Game {
 
     /// Recomputes rates, shortages and happiness without advancing time.
     private func updateEconomy() {
-        var produced = Stock()
-        var consumed = Stock()
-        var markets = 0.0, taverns = 0, fountains = 0, heating = 0.0
+        var net = Stock()
+        for resource in Resource.allCases {
+            net[resource] = rateBreakdown(for: resource).reduce(0) { $0 + $1.amount }
+        }
+        if net != rates { rates = net }
+
+        var taverns = 0, fountains = 0
         var lighthouse = false, chapel = false
         for i in tiles.indices {
-            guard let building = tiles[i].building else { continue }
-            if let out = output(at: i) {
-                produced[out.resource] += out.perSecond
-                if let input = out.input { consumed[input] += out.inputPerSecond }
-            }
-            switch building {
-            case .market: markets += Double(staff[i] ?? 0)
-            case .tavern where (staff[i] ?? 0) > 0: taverns += 1
-            case .fountain: fountains += 1
-            case .chapel: chapel = true
-            case .lighthouse: lighthouse = true
+            switch tiles[i].building {
+            case .tavern? where (staff[i] ?? 0) > 0: taverns += 1
+            case .fountain?: fountains += 1
+            case .chapel?: chapel = true
+            case .lighthouse?: lighthouse = true
             default: break
             }
-            if season == .winter { heating += building.heating }
         }
-        produced.gold += Double(population) * taxLevel.goldPerColonist * (1 + 0.4 * markets)
-
-        var net = produced
-        net.food -= foodConsumption
-        net.wood -= heating
-        for entry in consumed.entries { net[entry.resource] -= entry.amount }
-        if net != rates { rates = net }
 
         let nowFamine = stock.food < 0.5 && net.food < 0
         if nowFamine != famine {
             famine = nowFamine
             if nowFamine { notify("⚠️ Famine ! Les colons quittent l'avant-poste.", .bad) }
         }
-        let nowCold = season == .winter && heating > 0 && stock.wood < 0.5 && net.wood < 0
+        let nowCold = heatingNeed > 0 && stock.wood < 0.5 && net.wood < 0
         if nowCold != cold {
             cold = nowCold
             if nowCold { notify("🥶 Plus de bois pour se chauffer !", .bad) }
@@ -261,13 +254,15 @@ final class Game {
 
     static func coords(_ i: Int) -> (x: Int, y: Int) { (i % cols, i / cols) }
 
-    static func neighbors(of i: Int) -> [Int] {
+    static func neighbors(of i: Int) -> [Int] { tiles(within: 1, of: i) }
+
+    /// Tiles at most `reach` steps from `i`, diagonals included, `i` itself excluded.
+    static func tiles(within reach: Int, of i: Int) -> [Int] {
         let (x, y) = coords(i)
         var result: [Int] = []
-        for dy in -1...1 {
-            for dx in -1...1 where dx != 0 || dy != 0 {
-                let nx = x + dx, ny = y + dy
-                if nx >= 0, ny >= 0, nx < cols, ny < rows { result.append(index(nx, ny)) }
+        for ny in max(0, y - reach)...min(rows - 1, y + reach) {
+            for nx in max(0, x - reach)...min(cols - 1, x + reach) where nx != x || ny != y {
+                result.append(index(nx, ny))
             }
         }
         return result
@@ -281,9 +276,42 @@ final class Game {
         Game.neighbors(of: i).reduce(0) { $0 + (tiles[$1].building == building ? 1 : 0) }
     }
 
-    /// Farms next to water or to a well get +25 %.
+    /// Farms next to water or to a well get +25 %.
     func isIrrigated(_ i: Int) -> Bool {
         count(.water, around: i) > 0 || count(.well, around: i) > 0
+    }
+
+    /// Whether a staffed workshop within reach makes the producer on tile `i` 50 % more productive.
+    func hasWorkshopBoost(at i: Int) -> Bool {
+        guard let workshop = tiles[i].building?.workshop else { return false }
+        return Game.tiles(within: Game.workshopReach, of: i).contains {
+            tiles[$0].building == workshop && (staff[$0] ?? 0) > 0
+        }
+    }
+
+    /// The forge's bonus to every producer, in proportion to its staff.
+    var forgeBonus: Double {
+        guard let forge = tiles.firstIndex(where: { $0.building == .forge }) else { return 0 }
+        return Game.forgeMaxBonus * Double(staff[forge] ?? 0) / Double(BuildingType.forge.maxWorkers)
+    }
+
+    /// Extra production of the producer on tile `i`, e.g. 0.65 for +65 %.
+    func productionBonus(at i: Int) -> Double {
+        guard tiles[i].building?.isProducer == true else { return 0 }
+        return (hasWorkshopBoost(at: i) ? Game.workshopBonus : 0) + forgeBonus
+    }
+
+    /// Producers in reach of the workshop on tile `i`.
+    func improvedCount(by i: Int) -> Int {
+        guard let improves = tiles[i].building?.improves, !improves.isEmpty else { return 0 }
+        return Game.tiles(within: Game.workshopReach, of: i).filter { j in
+            tiles[j].building.map(improves.contains) ?? false
+        }.count
+    }
+
+    /// Wood burnt per second to heat homes; none outside winter.
+    var heatingNeed: Double {
+        season == .winter ? tiles.reduce(0) { $0 + ($1.building?.heating ?? 0) } : 0
     }
 
     var housing: Int { tiles.reduce(0) { $0 + ($1.building?.housing ?? 0) } }
@@ -304,18 +332,20 @@ final class Game {
     func output(at i: Int) -> BuildingOutput? {
         guard let building = tiles[i].building, building.maxWorkers > 0 else { return nil }
         let staffed = Double(staff[i] ?? 0) / Double(building.maxWorkers)
+        // Workshops and the forge multiply what producers make.
+        let worked = staffed * (1 + productionBonus(at: i))
         switch building {
         case .farm:
             let irrigation = isIrrigated(i) ? 1.25 : 1
-            return BuildingOutput(resource: .food, perSecond: staffed * season.farmMultiplier * irrigation)
+            return BuildingOutput(resource: .food, perSecond: worked * season.farmMultiplier * irrigation)
         case .fishery:
-            return BuildingOutput(resource: .food, perSecond: 0.5 * staffed * (season == .winter ? 0.5 : 1))
+            return BuildingOutput(resource: .food, perSecond: 0.5 * worked * (season == .winter ? 0.5 : 1))
         case .hunter:
-            return BuildingOutput(resource: .food, perSecond: 0.08 * Double(count(.forest, around: i)) * staffed)
+            return BuildingOutput(resource: .food, perSecond: 0.08 * Double(count(.forest, around: i)) * worked)
         case .lumber:
-            return BuildingOutput(resource: .wood, perSecond: 0.16 * Double(count(.forest, around: i)) * staffed)
+            return BuildingOutput(resource: .wood, perSecond: 0.16 * Double(count(.forest, around: i)) * worked)
         case .quarry:
-            return BuildingOutput(resource: .stone, perSecond: 0.14 * Double(count(.rock, around: i)) * staffed)
+            return BuildingOutput(resource: .stone, perSecond: 0.14 * Double(count(.rock, around: i)) * worked)
         case .carpenter:
             // Idles below the reserve so the colony keeps wood to heat itself.
             let working = stock.wood > Game.carpenterReserve ? staffed : 0
@@ -324,6 +354,43 @@ final class Game {
         default:
             return nil
         }
+    }
+
+    /// Every source and use of `resource` per second; together they add up to `rates`.
+    func rateBreakdown(for resource: Resource) -> [RateLine] {
+        var made: [BuildingType: (count: Int, amount: Double, bonus: Double)] = [:]
+        var used: [BuildingType: (count: Int, amount: Double)] = [:]
+        for i in tiles.indices {
+            guard let building = tiles[i].building, let out = output(at: i) else { continue }
+            if out.resource == resource {
+                let share = 1 - 1 / (1 + productionBonus(at: i))
+                let sum = made[building] ?? (0, 0, 0)
+                made[building] = (sum.count + 1, sum.amount + out.perSecond, sum.bonus + out.perSecond * share)
+            }
+            if out.input == resource {
+                let sum = used[building] ?? (0, 0)
+                used[building] = (sum.count + 1, sum.amount + out.inputPerSecond)
+            }
+        }
+        var lines = BuildingType.allCases.compactMap { type in
+            made[type].map { RateLine(label: "\(type.icon) \(type.name) ×\($0.count)", amount: $0.amount, bonus: $0.bonus) }
+        }
+        switch resource {
+        case .food:
+            lines.append(RateLine(label: "👥 Repas des colons", amount: -foodConsumption))
+        case .wood where heatingNeed > 0:
+            lines.append(RateLine(label: "🔥 Chauffage", amount: -heatingNeed))
+        case .gold:
+            let markets = tiles.indices.reduce(0.0) { $0 + (tiles[$1].building == .market ? Double(staff[$1] ?? 0) : 0) }
+            let base = Double(population) * taxLevel.goldPerColonist
+            lines.append(RateLine(label: "👥 Impôts", amount: base * (1 + 0.4 * markets), bonus: base * 0.4 * markets))
+        default:
+            break
+        }
+        lines += BuildingType.allCases.compactMap { type in
+            used[type].map { RateLine(label: "\(type.icon) \(type.name) ×\($0.count)", amount: -$0.amount) }
+        }
+        return lines
     }
 
     /// Why `type` can't go on tile `i`, or nil when it can.
@@ -348,11 +415,18 @@ final class Game {
             if count(.water, around: i) == 0 { return "Le port doit être au bord de l'eau." }
         case .chapel where has(.chapel):
             return "Une seule chapelle suffit."
+        case .forge where has(.forge):
+            return "Il n'y a qu'une forge."
         case .lighthouse:
             if has(.lighthouse) { return "Il n'y a qu'un seul Grand Phare." }
             if count(.water, around: i) == 0 { return "Le Grand Phare doit être au bord de l'eau." }
         default:
             break
+        }
+        if let rule = type.reachRule, !Game.tiles(within: Game.workshopReach, of: i).contains(where: {
+            tiles[$0].building.map(type.improves.contains) ?? false
+        }) {
+            return rule
         }
         guard checkCost else { return nil }
         if type == .lighthouse && population < Game.lighthousePopulation {
@@ -555,6 +629,7 @@ final class Game {
         case .quarry: has(.quarry)
         case .tavern: has(.tavern)
         case .pop25: population >= 25
+        case .workshop: BuildingType.workshops.contains(where: has)
         case .lighthouse: has(.lighthouse)
         }
     }

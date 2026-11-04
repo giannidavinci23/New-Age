@@ -21,7 +21,8 @@ struct MapView: View {
                         ForEach(0..<Game.cols, id: \.self) { x in
                             let i = Game.index(x, y)
                             TileView(tile: game.tiles[i], season: game.season, size: size,
-                                     highlighted: highlights.contains(i), badge: badge(for: i))
+                                     highlighted: highlights.contains(i), badge: badge(for: i),
+                                     boosted: game.hasWorkshopBoost(at: i))
                                 .onTapGesture { onTap(i) }
                         }
                     }
@@ -81,6 +82,8 @@ struct TileView: View {
     let size: CGFloat
     let highlighted: Bool
     let badge: StaffBadge
+    /// A workshop nearby makes this producer 50 % more productive.
+    let boosted: Bool
 
     var body: some View {
         ZStack {
@@ -106,6 +109,16 @@ struct TileView: View {
         }
         .frame(width: size, height: size)
         .overlay(alignment: .topTrailing) { badgeView }
+        .overlay(alignment: .bottomTrailing) {
+            if boosted {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: size * 0.16, weight: .heavy))
+                    .foregroundStyle(.white)
+                    .frame(width: size * 0.28, height: size * 0.28)
+                    .background(Color.green, in: Circle())
+                    .padding(size * 0.05)
+            }
+        }
         .contentShape(Rectangle())
     }
 
